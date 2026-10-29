@@ -1,0 +1,106 @@
+/**
+ * Real-browser end-to-end check (developer tool; needs `playwright` + a Chromium, and fakeServer.js running on :3000).
+ *   PLAYWRIGHT_PATH=<path to playwright module> SHOTS=<dir for screenshots> node tests/e2e/browser.e2e.js
+ * Uses the real fixture PDF/DOCX files, the real frontend and the real backend controllers.
+ */
+const path = require('path');
+const { chromium } = require(process.env.PLAYWRIGHT_PATH || '/home/claude/.npm-global/lib/node_modules/playwright');
+const FX = path.join(__dirname, '..', 'fixtures') + path.sep, SH = (process.env.SHOTS || '/tmp/shots') + path.sep, URL0 = process.env.BASE_URL || 'http://127.0.0.1:3000/';
+let failed = 0; const check = (ok, label) => { console.log((ok ? 'PASS ' : 'FAIL ') + label); if (!ok) failed++; };
+(async () => {
+  const browser = await chromium.launch(); const ctx = await browser.newContext({ viewport: { width: 1360, height: 900 }, colorScheme: 'light' }); const page = await ctx.newPage();
+  const errors = []; page.on('pageerror', (e) => errors.push('pageerror: ' + e.message)); page.on('console', (m) => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
+  const httpErrors = []; page.on('response', (r) => { if (r.status() >= 400 && r.url().includes('/api/')) httpErrors.push(r.request().method() + ' ' + r.url().replace(/^https?:\/\/[^/]+/, '') + ' -> ' + r.status()); });
+  const go = async (h) => { await page.goto(URL0 + h); };
+  await go(''); await page.waitForSelector('#loginForm');
+  check((await page.inputValue('#email')) === '' && (await page.inputValue('#password')) === '', 'login form is empty (no pre-filled demo credentials)');
+  check((await page.getAttribute('html', 'data-theme')) === 'light', 'theme "system" follows the device (light)');
+  await page.screenshot({ path: SH + '01-login-light.png' });
+  await page.click('#authToggle'); await page.fill('#regName', 'Rita Recruiter'); await page.fill('#email', 'rita@example.com'); await page.fill('#password', 'correct-horse-1'); await page.click('#loginSubmitBtn');
+  await page.waitForSelector('.shell'); check(/Get started/.test(await page.textContent('main')) && /Backend Connected/.test(await page.textContent('body')), 'registered -> empty workspace with "Get started" and "Backend Connected"');
+  await page.screenshot({ path: SH + '02-dashboard-empty-light.png' });
+  await page.click('[data-act="newjob"]'); await page.waitForSelector('#jfTitle');
+  await page.fill('#jfTitle', 'Full Stack Developer'); await page.fill('#jfCompany', 'Lumen Labs'); await page.fill('#jfLocation', 'Remote'); await page.fill('#jfExp', '2'); await page.fill('#jfEdu', "Bachelor's degree");
+  await page.fill('#jfReq', 'JavaScript, React, Node.js, MongoDB'); await page.fill('#jfPref', 'Docker, AWS'); await page.fill('#jfDesc', 'Build and ship web features with React, Node.js and MongoDB. Collaborate with designers. 2+ years of experience.');
+  await page.click('form[data-form="job"] button.primary'); await page.waitForFunction(() => db.jobs.length === 1, null, { timeout: 8000 });
+  check(await page.evaluate(() => /^[a-f0-9]{24}$/.test(db.jobs[0].id)), 'job created through the form and saved by the server (ObjectId string)');
+  await go('#/candidates'); await page.waitForSelector('#dropZone'); await page.screenshot({ path: SH + '03-upload-empty-light.png' });
+  check(/Select the job/.test(await page.textContent('.uploadcard')), 'upload card asks to select a job first');
+  const jobId = await page.evaluate(() => db.jobs[0].id); await page.selectOption('#upJob', jobId);
+  await page.setInputFiles('#upFile', ['priya_nair.pdf', 'rohan_mehta.pdf', 'ananya_iyer.docx', 'marcus_webb.docx'].map((f) => FX + f));
+  await page.waitForFunction(() => document.querySelectorAll('.upi.ready').length === 4, null, { timeout: 20000 });
+  const names = await page.$$eval('.upi input[data-upfield="name"]', (els) => els.map((e) => e.value)); check(JSON.stringify(names) === JSON.stringify(['Priya Nair', 'Rohan Mehta', 'Ananya Iyer', 'Marcus Webb']), 'four REAL files (2 PDF + 2 DOCX) parsed on the server; extracted names: ' + names.join(' | '));
+  const emails = await page.$$eval('.upi input[data-upfield="email"]', (els) => els.map((e) => e.value)); check(new Set(emails).size === 4 && emails.every(Boolean), 'four different extracted emails: ' + emails.join(' | '));
+  await page.screenshot({ path: SH + '04-upload-review-light.png', fullPage: true });
+  check((await page.evaluate(() => db.cands.length)) === 0, 'nothing saved until the recruiter confirms');
+  await page.click('[data-act="upcreateall"]'); await page.waitForFunction(() => db.cands.length === 4, null, { timeout: 20000 }); await page.waitForTimeout(400);
+  check((await page.evaluate(() => db.cands.map((c) => c.name).join('|'))) === 'Priya Nair|Rohan Mehta|Ananya Iyer|Marcus Webb' && !(await page.content()).includes('Dev Malhotra'), '4 distinct candidates created; "Dev Malhotra" appears nowhere');
+  await page.screenshot({ path: SH + '04b-upload-saved-light.png', fullPage: true });
+  await page.setInputFiles('#upFile', [FX + 'priya_nair.pdf']); await page.waitForFunction(() => /already in the list/.test(document.body.textContent), null, { timeout: 8000 }); check(true, 'choosing the same file again while it is in the list is ignored (no duplicate processing)');
+  await page.click('[data-act="upclear"]'); await page.setInputFiles('#upFile', [FX + 'priya_nair.pdf']); await page.waitForFunction(() => /already exists/.test(document.getElementById('upQueue').textContent), null, { timeout: 8000 }); check(true, 'uploading Priya again after clearing -> server says "This candidate already exists for this job."');
+  await page.setInputFiles('#upFile', [FX + 'fake.exe']); await page.waitForFunction(() => /Unsupported file type/.test(document.getElementById('upQueue').textContent)); check(true, 'fake.exe -> "Unsupported file type"');
+  await page.setInputFiles('#upFile', [FX + 'corrupted.pdf']); await page.waitForFunction(() => /Unable to extract readable text/.test(document.getElementById('upQueue').textContent), null, { timeout: 8000 }); check(true, 'corrupted PDF -> "Unable to extract readable text"');
+  await page.setInputFiles('#upFile', [FX + 'too_little.pdf']); await page.waitForFunction(() => /insufficient information/.test(document.getElementById('upQueue').textContent), null, { timeout: 8000 }); check(true, 'near-empty resume -> "insufficient information"');
+  await page.screenshot({ path: SH + '05-upload-errors-light.png', fullPage: true });
+  await go('#/candidates'); await page.waitForSelector('table'); await page.screenshot({ path: SH + '06-candidates-light.png', fullPage: true });
+  const id0 = await page.evaluate(() => db.cands[0].id);
+  await go('#/candidates/' + id0); await page.waitForSelector('text=Overview'); await page.screenshot({ path: SH + '07-profile-light.png', fullPage: true });
+  const prof = await page.textContent('main'); check(/priya\.nair@example\.com/.test(prof) && /Brightline Apps/.test(prof) && /Hostel Booking Platform/.test(prof) && /Riverbend/.test(prof) && /AWS Certified/.test(prof), 'profile shows the real extracted email, experience, project, education and certification');
+  await go('#/screening'); await page.waitForSelector('[data-act="runscreen"]'); await page.click('[data-act="runscreen"]');
+  await page.waitForFunction(() => db.screenings.length >= 4, null, { timeout: 20000 }); await page.waitForTimeout(400);
+  await go('#/ranking'); await page.waitForSelector('table.rt'); await page.screenshot({ path: SH + '08-ranking-light.png', fullPage: true });
+  const rankNames = await page.$$eval('table.rt tbody tr td:nth-child(2) b', (e) => e.map((x) => x.textContent)); check(rankNames.length === 4 && rankNames[0] === 'Priya Nair', 'ranking (server) lists 4 screened candidates, best match first: ' + rankNames.join(' > '));
+  await page.evaluate(() => { sel = db.cands.slice(0, 3).map((c) => c.id); location.hash = '#/compare'; }); await page.waitForSelector('table.cmp'); await page.waitForTimeout(500); await page.screenshot({ path: SH + '09-compare-light.png', fullPage: true });
+  check(/Recruiter decision required/.test(await page.textContent('main')), 'compare page: "Recruiter decision required", no winner');
+  await go('#/interview'); await page.waitForSelector('#iqCand'); await page.selectOption('#iqCand', await page.evaluate(() => db.cands[1].id)); await page.waitForTimeout(300);
+  await page.click('[data-act="iqgen"]'); await page.waitForSelector('.qcard'); await page.click('[data-tab="skillGap"]'); await page.waitForSelector('.qcard'); await page.screenshot({ path: SH + '10-interview-light.png', fullPage: true });
+  check(/Skill-gap/.test(await page.textContent('main')) && (await page.$$('.qcard')).length > 0, 'interview workspace: skill-gap questions from the real candidate and job');
+  await go('#/reports/' + id0); await page.waitForSelector('article.report'); await page.waitForTimeout(400); await page.screenshot({ path: SH + '11-report-light.png', fullPage: true });
+  check(/Fairness Disclosure/.test(await page.textContent('article.report')) && /Hostel Booking Platform/.test(await page.textContent('article.report')), 'report: real evidence + fairness disclosure');
+  await go('#/analytics'); await page.waitForSelector('.grid'); await page.waitForTimeout(600); await page.screenshot({ path: SH + '12-analytics-light.png', fullPage: true });
+  await go('#/audit'); await page.waitForSelector('table.rt'); const audit = await page.textContent('main'); check(/RESUME_UPLOADED/.test(audit) && /RANKING_GENERATED/.test(audit) && /SCREENING_COMPLETED/.test(audit), 'audit log lists RESUME_UPLOADED, SCREENING_COMPLETED, RANKING_GENERATED');
+  await page.screenshot({ path: SH + '13-audit-light.png', fullPage: true });
+  await go('#/dashboard'); await page.waitForSelector('text=Top Candidates'); await page.waitForTimeout(600); await page.screenshot({ path: SH + '14-dashboard-light.png', fullPage: true });
+  await go('#/jobs/' + jobId); await page.waitForSelector('text=Upload Resume'); await page.screenshot({ path: SH + '15-job-light.png', fullPage: true });
+  // ---- AI-extraction feature set: injection resume, warnings, edit before saving, JSON download, profile extraction card, edit after saving
+  await go('#/candidates'); await page.waitForSelector('#dropZone');
+  check(/Maximum 5 MB/.test(await page.textContent('#dropZone')), 'size limit shown in the upload area comes from the server (5 MB)');
+  await page.selectOption('#upJob', '__new__'); await page.waitForSelector('#jfTitle'); await page.screenshot({ path: SH + '16-upload-new-job-light.png' }); await page.click('[data-act="close"]');
+  check(true, 'upload job selector offers "Create a new job…"');
+  await page.selectOption('#upJob', jobId);
+  await page.setInputFiles('#upFile', [FX + 'kavya_rao.pdf']); await page.waitForFunction(() => document.querySelectorAll('.upi.ready').length === 1, null, { timeout: 15000 });
+  const kq = await page.textContent('#upQueue');
+  check(/reads like instructions/.test(kq) && /Rule-based extraction/.test(kq), 'resume with an embedded "ignore all previous instructions" line: parsed normally, flagged with a warning');
+  check((await page.inputValue('.upi input[data-upfield="skills"]')).includes('Redis') && /8\.7/.test(await page.inputValue('.upi textarea[data-upfield="education"]') + ' CGPA 8.7'), 'review card exposes editable skills and education');
+  await page.screenshot({ path: SH + '17-upload-review-warning-light.png', fullPage: true });
+  const [dl] = await Promise.all([page.waitForEvent('download'), page.click('.upi [data-act="upjson"]')]);
+  const exported = JSON.parse(require('fs').readFileSync(await dl.path(), 'utf8')); check(exported.name === 'Kavya Rao' && Array.isArray(exported.experience) && !('resumeText' in exported), 'Download JSON gives the structured result (no resume text)');
+  await page.fill('.upi input[data-upfield="skills"]', 'JavaScript, Python, SQL, MongoDB, AWS'); await page.click('.upi [data-act="upcreate"]'); await page.waitForFunction(() => db.cands.length === 5, null, { timeout: 15000 });
+  const kid = await page.evaluate(() => db.cands.filter((c) => c.name === 'Kavya Rao')[0].id);
+  check(JSON.stringify(await page.evaluate((i) => findCand(db, i).skills, kid)) === JSON.stringify(['JavaScript', 'Python', 'SQL', 'MongoDB', 'AWS']), 'the recruiter\'s correction to the skills was saved (Redis removed)');
+  await go('#/candidates/' + kid); await page.waitForSelector('text=Extraction'); await page.screenshot({ path: SH + '18-profile-extraction-light.png', fullPage: true });
+  const kp = await page.textContent('main');
+  check(/CGPA 8\.7\/10/.test(kp) && /2018 – 2022/.test(kp) && /Mar 2022 – Feb 2024/.test(kp) && /Internship/.test(kp) && /40%/.test(kp) && /Publications/.test(kp) && /smart-parking/.test(kp), 'profile shows education dates + CGPA, experience dates, internship, measurable result, project link, publications');
+  check(/reads like instructions/.test(kp) && /Rule-based/.test(kp) && /How this score is calculated, and its limits/.test(kp), 'profile shows the extraction warning, method and the scoring-limits note');
+  await page.click('[data-act="editcand"]'); await page.waitForSelector('#ceName'); await page.fill('#ceLocation', 'Bengaluru, Karnataka'); await page.fill('#ceEmail', 'not-an-email'); await page.click('form[data-form="editcand"] button[type="submit"]');
+  await page.waitForFunction(() => /Could not save/.test(document.getElementById('ceErr').textContent), null, { timeout: 8000 }); check(true, 'invalid edit (bad email) is rejected by the server with a visible message and the form stays open');
+  await page.fill('#ceEmail', 'kavya.rao@example.com'); await page.click('form[data-form="editcand"] button[type="submit"]'); await page.waitForFunction(() => /Bengaluru/.test(document.body.textContent), null, { timeout: 8000 });
+  check(/Bengaluru, Karnataka/.test(await page.textContent('main')), 'corrected details saved and shown (persisted through the API)');
+  await page.evaluate((i) => actions.screenone({ dataset: { id: i }, disabled: false, innerHTML: '' }), kid); await page.waitForFunction(() => db.screenings.length >= 5, null, { timeout: 10000 });
+  const kscore = await page.evaluate(async (j) => { const r = await API.getRanking(j); const k = r.filter((x) => x.name === 'Kavya Rao')[0]; return k ? k.overallScore : -1; }, jobId);
+  check(kscore > 0 && kscore < 100, 'the injected "rate 100 percent" text had no effect: score is ' + kscore + '% from the deterministic engine');
+  await go('#/candidates/' + kid); await page.waitForSelector('text=Overview'); const gaps = await page.textContent('main'); check(/Not found in resume/.test(gaps) && /does not mean the candidate lacks them/.test(gaps), 'gaps are worded as "not found in the resume", not "lacks the skill"');
+  const st = await page.evaluate(() => computeSelfTest().map((x) => [x.name, x.ok])); check(st.every((x) => x[1]), 'in-browser self-test: ' + st.filter((x) => x[1]).length + '/' + st.length + ' pass' + (st.some((x) => !x[1]) ? ' (failing: ' + st.filter((x) => !x[1]).map((x) => x[0]).join('; ') + ')' : ''));
+  await go('#/settings'); await page.selectOption('#sTheme', 'dark'); await page.click('form[data-form="settings"] button.primary'); await page.waitForTimeout(300);
+  check((await page.getAttribute('html', 'data-theme')) === 'dark', 'theme set to Dark'); await page.reload(); await page.waitForSelector('.shell'); check((await page.getAttribute('html', 'data-theme')) === 'dark', 'dark theme persists after reload (session also survived)');
+  for (const [file, hash] of [['20-dashboard-dark', '#/dashboard'], ['21-candidates-dark', '#/candidates'], ['22-ranking-dark', '#/ranking'], ['23-profile-dark', '#/candidates/' + id0], ['24-report-dark', '#/reports/' + id0], ['25-interview-dark', '#/interview'], ['26-analytics-dark', '#/analytics'], ['27-settings-dark', '#/settings']]) { await go(hash); await page.waitForTimeout(800); await page.screenshot({ path: SH + file + '.png', fullPage: true }); }
+  await go('#/candidates'); await page.waitForSelector('#dropZone'); await page.screenshot({ path: SH + '28-upload-dark.png' });
+  await page.evaluate(() => actions.logout()); await page.waitForSelector('#loginForm'); await page.screenshot({ path: SH + '29-login-dark.png' });
+  const m = await browser.newContext({ viewport: { width: 390, height: 844 }, colorScheme: 'light', deviceScaleFactor: 2 }); const mp = await m.newPage(); mp.on('pageerror', (e) => errors.push('mobile pageerror: ' + e.message));
+  await mp.goto(URL0); await mp.evaluate(() => localStorage.setItem('hirelens_token_v1', 'tok-1')); await mp.reload(); await mp.waitForSelector('.shell'); await mp.waitForTimeout(600);
+  for (const [f, h] of [['30-mobile-candidates', '#/candidates'], ['31-mobile-ranking', '#/ranking'], ['32-mobile-dashboard', '#/dashboard'], ['33-mobile-profile', '#/candidates/' + id0]]) { await mp.goto(URL0 + h); await mp.waitForTimeout(800); await mp.screenshot({ path: SH + f + '.png', fullPage: true });
+    const overflow = await mp.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth); check(overflow <= 2, `mobile ${h}: no page-level horizontal overflow (${overflow}px)`); }
+  console.log('\nAPI responses >= 400 (expected: the deliberately invalid uploads):', JSON.stringify(httpErrors));
+  console.log('\nbrowser console/page errors:', JSON.stringify(errors.filter((e) => !/Failed to load resource.*(40[19]|404)/.test(e))));
+  console.log(failed ? `\n${failed} CHECK(S) FAILED` : '\nALL BROWSER CHECKS PASSED'); await browser.close(); process.exit(failed ? 1 : 0);
+})().catch((e) => { console.error('HARNESS ERROR', e.message.split('\n').slice(0, 4).join(' | ')); process.exit(2); });

@@ -1,0 +1,37 @@
+Ananya Iyer
+
+ananya.iyer@example.net | +91 90000 45678 | Bengaluru, Karnataka
+
+linkedin.com/in/ananya-iyer-analytics
+
+Professional Summary
+
+Data analyst turning messy data into decisions. 4 years of experience in analytics.
+
+Skills
+
+Python, SQL, Pandas, NumPy, Tableau, Power BI, Excel, Statistics
+
+Work Experience
+
+Data Analyst | Northwind Retail | Mar 2019 - Feb 2023
+
+Built Tableau dashboards for weekly sales reviews.
+
+Automated reporting with Python and Pandas.
+
+Projects
+
+Churn Prediction
+
+Logistic regression on customer data using Python and scikit-learn.
+
+Education
+
+M.Sc. in Statistics
+
+Deccan University, 2019
+
+Certifications
+
+Tableau Desktop Specialist

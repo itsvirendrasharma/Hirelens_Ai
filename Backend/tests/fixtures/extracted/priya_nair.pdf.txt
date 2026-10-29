@@ -1,0 +1,28 @@
+Priya Nair
+Full Stack Developer
+priya.nair@example.com | +91 98450 11223 | Pune, India
+linkedin.com/in/priya-nair-dev | github.com/priyanair-dev
+SUMMARY
+Full stack developer with 3 years of experience building web apps with React and Node.js.
+SKILLS
+Languages: JavaScript, TypeScript, Python, SQL
+Frameworks: ReactJS, Node, Express JS, Django
+Databases: Mongo DB, PostgreSQL
+Tools: Git, Docker, AWS, Postman
+EXPERIENCE
+Software Engineer at Brightline Apps Jan 2021 - Dec 2022
+- Built React dashboards and Node.js REST API services backed by MongoDB.
+- Containerised services with Docker and deployed to AWS.
+Software Engineering Intern at Nimbus Labs Jun 2020 - Aug 2020
+- Wrote unit tests and fixed bugs in an Express.js backend.
+PROJECTS
+Hostel Booking Platform | React, Node.js, MongoDB
+- Full-stack room booking app with JWT authentication and payment webhooks.
+Expense Tracker - Python Flask app with PostgreSQL and chart reports
+EDUCATION
+B.Tech in Computer Science, Riverbend Institute of Technology (2020)
+CERTIFICATIONS
+- AWS Certified Cloud Practitioner
+- MongoDB Developer Associate
+ACHIEVEMENTS
+- Winner, Smart India Hackathon 2019 (college round)

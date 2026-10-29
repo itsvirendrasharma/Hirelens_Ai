@@ -1,0 +1,20 @@
+ROHAN MEHTA
+rohan.mehta@example.org | Indore, Madhya Pradesh | 9876543210
+github.com/rohanmehta-codes
+OBJECTIVE
+Final-year student looking for a Java developer role.
+TECHNICAL SKILLS
+Programming: Java, C++, Python
+Web: HTML5, CSS3, React.js, Bootstrap
+Database: MySQL, SQLite
+PROJECTS
+Library Management System
+- Desktop application in Java with MySQL for issuing and returning books.
+Weather Dashboard
+- React.js app consuming a public REST API with charts.
+- Deployed on Netlify.
+EDUCATION
+Bachelor of Technology in Information Technology
+Lakeside Institute of Technology, 2020 - 2024
+CERTIFICATIONS
+Java Programming Masterclass (Udemy)
